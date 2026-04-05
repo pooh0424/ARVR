@@ -22,7 +22,7 @@ def compute_disparity_1d_ssd(img_left, img_right, window_size, max_disparity=64)
             best_d = 0
             
             # 限制只在「同一條水平線」上，往左邊搜尋視差 d
-            for d in range(max_disparity):
+            for d in range(0, x - half_window + 1):
                 if x - d - half_window >= 0:
                     # 取得右圖的 Window
                     w_R = img_right[y-half_window : y+half_window+1, 
@@ -45,7 +45,6 @@ img_l = cv2.imread('im0.ppm', cv2.IMREAD_GRAYSCALE)
 img_r = cv2.imread('im8.ppm', cv2.IMREAD_GRAYSCALE)
 
 if img_l is not None and img_r is not None:
-    # 測試特定的 Window Size
     w_size = 17
     depth_map = compute_disparity_1d_ssd(img_l, img_r, window_size=w_size)
 
