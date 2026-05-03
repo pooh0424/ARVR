@@ -30,7 +30,6 @@ class PhotometricStereo:
                 parts = content.split()
                 if len(parts) >= 3:
                     raw_lights.append([float(x) for x in parts[:3]])
-
         # 載入影像並同步過濾光源
         temp_images = []
         temp_lights = []
@@ -47,52 +46,71 @@ class PhotometricStereo:
                 temp_lights.append(L / norm if norm != 0 else L)
             else:
                 print(f"警告: 找不到 {img_name}")
-
         self.images = np.array(temp_images)
         self.light_dirs = np.array(temp_lights)
         self.height, self.width = self.images[0].shape
         print(f"成功載入 {len(self.images)} 張影像。")
-
+        
     def compute_ps(self):
-        """2. 計算 Albedo 與 Normals"""
+        """2. 計算 Albedo 與 Normals (加入安全遮罩)"""
         print("--- 計算表面法向量 ---")
-        # 影像矩陣 I (N, H*W), 光源矩陣 S (N, 3)
         I = self.images.reshape(len(self.images), -1)
         S = self.light_dirs
         
-        # 解 S * b = I  => b = pinv(S) * I
         S_inv = np.linalg.pinv(S)
-        b = S_inv @ I  # (3, H*W)
+        b = S_inv @ I 
         
-        # 反射率 Albedo = |b|
+        # 1. 計算反射率
         albedo = np.linalg.norm(b, axis=0)
         self.albedo = albedo.reshape(self.height, self.width)
         
-        # 法向量 Normal = b / |b|
-        albedo_safe = np.copy(albedo)
-        albedo_safe[albedo_safe == 0] = 1.0
-        n_raw = b / albedo_safe
+        # 2. 建立有效像素遮罩 (門檻值可依資料微調)
+        mask_flat = albedo > 0.1
+        
+        # 3. 初始化法向量，預設為 [0, 0, 1] 而非 [0, 0, 0]
+        n_raw = np.zeros_like(b)
+        n_raw[2, :] = 1.0  # 預設 Z 軸方向為 1
+        
+        # 4. 只在有效區域計算正規化
+        n_raw[:, mask_flat] = b[:, mask_flat] / albedo[mask_flat]
+        
         self.normals = n_raw.T.reshape(self.height, self.width, 3)
 
     def reconstruct_surface(self):
-        """3. 使用巢狀迴圈疊加高度 (Integration)"""
-        print("--- 重建表面高度 ---")
+        """3. 使用 Mask 排除背景的積分"""
+        print("--- 重建表面高度 (已套用 Mask) ---")
         nx = self.normals[:, :, 0]
         ny = self.normals[:, :, 1]
         nz = self.normals[:, :, 2]
         
+        # 防止除以 0，且只在物體區域計算斜率
         nz_safe = np.where(nz == 0, 1.0, nz)
-        p = -nx / nz_safe # dz/dx
-        q = -ny / nz_safe # dz/dy
+        p = -nx / nz_safe
+        q = -ny / nz_safe
+        
+        # 建立 2D 遮罩
+        mask = self.albedo > 0.1
         
         Z = np.zeros((self.height, self.width))
-        # 巢狀迴圈疊加高度
-        for c in range(1, self.width):
-            Z[0, c] = Z[0, c-1] + p[0, c]
-        for r in range(1, self.height):
-            for c in range(self.width):
-                Z[r, c] = Z[r-1, c] + q[r, c]
         
+        # --- 改良版積分路徑 ---
+        # 1. 處理第一欄 (Column 0)
+        for r in range(1, self.height):
+            if mask[r, 0]:
+                Z[r, 0] = Z[r-1, 0] + q[r, 0]
+            else:
+                Z[r, 0] = Z[r-1, 0] # 背景維持高度
+        
+        # 2. 處理每一列 (從左向右)
+        for r in range(self.height):
+            for c in range(1, self.width):
+                if mask[r, c]:
+                    Z[r, c] = Z[r, c-1] + p[r, c]
+                else:
+                    Z[r, c] = Z[r, c-1] # 背景維持高度
+        
+        # 3. (選配) 背景歸零，讓物體在 OBJ 中更明顯
+        Z[~mask] = 0
         self.height_map = Z
 
     def export_obj(self, filename="result.obj"):
@@ -119,7 +137,7 @@ class PhotometricStereo:
 
 if __name__ == "__main__":
     # 請確保此路徑下有 light.txt 和 pic1.bmp ~ pic6.bmp
-    folder = './test_datasets/bunny' 
+    folder = './test_datasets/bunny/' 
     
     ps = PhotometricStereo(folder)
     ps.load_data()
