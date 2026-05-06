@@ -99,7 +99,7 @@ class PhotometricStereo:
         nz = self.normals[:, :, 2]
 
         nz_safe = np.where(nz == 0, 1e-5, nz) #避免除以零，將 Nz 中的零值替換為一個小的常數
-        p = nx / nz_safe   #計算 p 梯度（Nx/Nz）
+        p = -nx / nz_safe   #計算 p 梯度（-Nx/Nz）
         q = ny / nz_safe    #計算 q 梯度（Ny/Nz）
 
         # 分別計算兩種高度圖
